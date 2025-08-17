@@ -1,0 +1,6 @@
+*.csv filter=lfs diff=lfs merge=lfs -text
+*.txt filter=lfs diff=lfs merge=lfs -text
+all_umis_len12.txt filter=lfs diff=lfs merge=lfs -text
+umi_probs_12.csv filter=lfs diff=lfs merge=lfs -text
+old_scripts/all_umis_len12.txt filter=lfs diff=lfs merge=lfs -text
+old_scripts/umi_probs_12.csv filter=lfs diff=lfs merge=lfs -text
