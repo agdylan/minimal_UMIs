@@ -49,7 +49,7 @@ def nonunif_build_lookup_table(Y_max, K, f_hat_values, n_values):
         
     return n_lookup_table
 
-def generate_nonunif_estimator(prob_arr, k, Y_max):
+def generate_nonunif_estimator(prob_arr, k, Y_max, verbose=False):
     """
     Factory function to generate a fast Method of Moments estimator.
     Usage: estimator = generate_nonunif_estimator(prob_arr, k, Y_max)
@@ -59,6 +59,7 @@ def generate_nonunif_estimator(prob_arr, k, Y_max):
         prob_arr (np.ndarray): Array of probabilities for the forward model.
         k (int): The exponent used to calculate K = 4**k.
         Y_max (int): The maximum count value observed in the data.
+        verbose (bool): If True, enables verbose output for debugging.
 
     Returns:
         function: A fast estimator function that takes a matrix of counts and
@@ -75,6 +76,10 @@ def generate_nonunif_estimator(prob_arr, k, Y_max):
     while non_unif_forward_model(n_max, prob_arr, K) <= target_y:
         n_max *= 2
     
+    if verbose:
+        print(f"Found n_max = {n_max} where f(n_max)= {non_unif_forward_model(n_max, prob_arr, K)} > {target_y}")
+        print(f"f(n_max/2)= {non_unif_forward_model(n_max//2, prob_arr, K)} < {target_y}")
+
     # 2. Create the grid for interpolation up to the found n_max
     n_values = np.arange(1, n_max + 1, dtype=np.float64)
     # This loop can be slow for large n_max, but it's a one-time cost
@@ -83,14 +88,16 @@ def generate_nonunif_estimator(prob_arr, k, Y_max):
     # Check if the interpolation range is valid
     if f_hat_values[-1] < target_y:
         raise ValueError(
-            f"Failed to find an n_max where f(n_max) > {target_y}. "
+            f"Failed to find an n_max where f(n_max) > {target_y}. Error."
             f"f({n_max}) = {f_hat_values[-1]}. Consider increasing search limit."
         )
 
     # 3. Create the lookup table as a one-time upfront cost
-    print(f"Generating estimator lookup table for Y_max = {Y_max} using n_max = {n_max}...")
+    if verbose:
+        print(f"Generating estimator lookup table for Y_max = {Y_max} using n_max = {n_max}...")
     n_lookup_table = nonunif_build_lookup_table(Y_max, K, f_hat_values, n_values)
-    print("Estimator generated successfully.")
+    if verbose:
+        print("Estimator generated successfully.")
 
     # 4. Define and return the fast estimator function (a closure)
     def estimator(matrix):
@@ -100,7 +107,7 @@ def generate_nonunif_estimator(prob_arr, k, Y_max):
         """
         # Clip values to ensure they are valid indices for the lookup table
         if np.any((matrix < 0) | (matrix > Y_max)):
-            raise ValueError(f"All values in the input matrix must be in the range [0, {Y_max}].")
+            raise ValueError(f"Estimator generated with max value {Y_max}. All values in the input matrix must be in the range [0, {Y_max}]. However, values range from {matrix.min()} to {matrix.max()}.")
         return n_lookup_table[matrix.astype(int)]
 
     return estimator
