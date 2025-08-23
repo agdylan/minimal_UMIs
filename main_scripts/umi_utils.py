@@ -1,6 +1,58 @@
 import numpy as np
 from numba import njit
+import math
 
+
+
+### Uniform forward model: from umi_utils import f
+def f(n_vals, j):
+    """Used for the uniform forward model."""
+    return 4**j * (1 - (1 - 1 / 4**j)**n_vals)
+
+
+
+
+
+### Uniform Method of Moments Estimator: from umi_utils import mom_estimator_unif
+@njit
+def _mom_estimator_unif_scalar(y, K):
+    """
+    Scalar core (Numba-compiled).
+    Uses the same recursive rule for y == K.
+    """
+    if y == K:
+        # one-step recursion: f(K) = f(K-1) + K
+        return _mom_estimator_unif_scalar(K - 1.0, K) + K
+    # general case
+    denom = math.log(1.0 - 1.0 / K)
+    return math.log(1.0 - y / K) / denom
+
+@njit
+def _mom_estimator_unif_array(y, K):
+    """
+    Numba-compiled loop over any-shaped array.
+    """
+    yr = y.ravel()
+    out = np.empty(yr.size, np.float64)
+    for i in range(yr.size):
+        out[i] = _mom_estimator_unif_scalar(yr[i], K)
+    return out.reshape(y.shape)
+
+def mom_estimator_unif(y, K):
+    """
+    Public API unchanged. Accepts scalar/array-like y.
+    """
+    # cast to float array once
+    arr = np.asarray(y, dtype=np.float64)
+    K = float(K)
+    if arr.ndim == 0:  # scalar y
+        return _mom_estimator_unif_scalar(float(arr), K)
+    return _mom_estimator_unif_array(arr, K)
+
+
+
+
+### Non-uniform forward model: from umi_utils import non_unif_forward_model 
 @njit
 def non_unif_forward_model(n, prob_arr, K):
     """
@@ -9,6 +61,10 @@ def non_unif_forward_model(n, prob_arr, K):
     """
     return K - np.sum((1 - prob_arr)**n)
 
+
+
+
+### Non-uniform Method of Moments Estimator, from umi_utils import generate_nonunif_estimator
 @njit
 def nonunif_build_lookup_table(Y_max, K, f_hat_values, n_values):
     """
