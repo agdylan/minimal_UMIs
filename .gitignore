@@ -1,0 +1,9 @@
+# Ignore everything by default
+/*
+
+# But keep these
+!/main_scripts/
+!/figures/
+
+# And keep this file
+!.gitignore
