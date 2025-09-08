@@ -1,4 +1,4 @@
-# UMI Collision-Aware Estimator 
+# Unique molecular identifiers don't need to be unique: a collision-aware estimator for RNA-seq quantification
 
 ## Overview 
 RNA-sequencing (RNA-seq) relies on Unique Molecular Identifiers (UMIs) to accurately quantify gene expression after PCR amplification.
