@@ -7,3 +7,4 @@
 
 # And keep this file
 !.gitignore
+/data/umi_probs/
