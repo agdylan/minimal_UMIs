@@ -1,5 +1,7 @@
 # Unique molecular identifiers don't need to be unique: a collision-aware estimator for RNA-seq quantification
 
+Dylan Agyemang, Rafael A. Irizarry, Tavor Z. Baharav. doi: https://doi.org/10.1101/2025.09.08.674884
+
 ## Overview 
 RNA-sequencing (RNA-seq) relies on Unique Molecular Identifiers (UMIs) to accurately quantify gene expression after PCR amplification.
 Longer UMIs minimize collisions---where two distinct transcripts are assigned the same UMI---at the cost of increased sequencing and synthesis costs. However, it is not clear how long UMIs need to be in practice, especially given the nonuniformity of the empirical UMI distribution.
