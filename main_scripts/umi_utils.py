@@ -1,6 +1,10 @@
 import numpy as np
 from numba import njit
 import math
+import itertools
+import pandas as pd
+import numpy as np
+from pathlib import Path
 
 
 
@@ -167,3 +171,35 @@ def generate_nonunif_estimator(prob_arr, k, Y_max, verbose=False):
         return n_lookup_table[matrix.astype(int)]
 
     return estimator
+
+
+### Generating the umi_probs 
+def generate_umis_and_probs(max_len=12, outdir=""):
+    # nucleotide probabilities (kept local to the function)
+    nt_probs = {'A': 0.23, 'C': 0.24, 'G': 0.21, 'T': 0.32}
+    nt_logs = {nt: np.log(p) for nt, p in nt_probs.items()}
+
+    outdir = Path(outdir)
+    outdir.mkdir(exist_ok=True)
+
+    umi_dfs = {}
+    for length in range(1, max_len + 1):
+        # generate all UMIs for this length
+        umis = [''.join(p) for p in itertools.product(nt_probs.keys(), repeat=length)]
+        
+        # compute log-probabilities (sum of logs)
+        log_probs = [sum(nt_logs[base] for base in umi) for umi in umis]
+        
+        # exponentiate to get probabilities
+        probs = np.exp(log_probs)
+        
+        # store in a DataFrame
+        df = pd.DataFrame({'UMI': umis, 'prob': probs})
+        umi_dfs[length] = df
+
+        # save CSV file
+        csv_path = outdir / f"umi_probs_{length}.csv"
+        df.to_csv(csv_path, index=False)
+
+        print(f"Saved: {csv_path}")
+    return umi_dfs
