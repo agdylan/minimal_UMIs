@@ -37,11 +37,11 @@ This repository includes a minimal working example for correcting UMI counts for
 To run the minimal working example, execute:
 
 ```bash
-python main_scripts/minimal_working_example/minimal_working_example.py
+python minimal_working_example/minimal_working_example.py
 ```
 For a description of available options and arguments, run:
 
 ```bash
-python main_scripts/minimal_working_example/minimal_working_example.py -h
+python minimal_working_example/minimal_working_example.py -h
 ```
  
