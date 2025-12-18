@@ -38,5 +38,10 @@ To run the minimal working example, execute:
 
 ```bash
 python main_scripts/minimal_working_example/minimal_working_example.py
+```
+For a description of available options and arguments, run:
 
+```bash
+python main_scripts/minimal_working_example/minimal_working_example.py -h
+```
  
