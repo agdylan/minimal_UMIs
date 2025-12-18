@@ -30,5 +30,15 @@ RNA-sequencing (RNA-seq) relies on Unique Molecular Identifiers (UMIs) to accura
 - `main_scripts/` – Core scripts required to reproduce experiments  
 
 
+## Minimal Working Example
+
+This repository includes a minimal working example for correcting UMI counts for collisions using a non-uniform, collision-aware estimator, as described in the accompanying bioRxiv manuscript. A small AnnData object is provided to allow the example to run out of the box.
+
+To run the minimal working example, execute:
+
+```bash
+python main_scripts/minimal_working_example/minimal_working_example.py
+
+
 
  
