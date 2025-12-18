@@ -39,6 +39,4 @@ To run the minimal working example, execute:
 ```bash
 python main_scripts/minimal_working_example/minimal_working_example.py
 
-
-
  
