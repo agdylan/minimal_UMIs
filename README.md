@@ -37,11 +37,12 @@ This repository includes a minimal working example for correcting UMI counts for
 To run the minimal working example, execute:
 
 ```bash
-python minimal_working_example/minimal_working_example.py
+cd main_scripts
+python collision_correction.py
 ```
 For a description of available options and arguments, run:
 
 ```bash
-python minimal_working_example/minimal_working_example.py -h
+python collision_correction.py -h
 ```
  
