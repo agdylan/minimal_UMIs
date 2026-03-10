@@ -63,7 +63,8 @@ def non_unif_forward_model(n, prob_arr, K):
     Calculates the forward model: f(n) = K - sum((1 - p)^n).
     This is our f(n) which is monotonically increasing with n.
     """
-    return K - np.sum((1 - prob_arr)**n)
+    m = prob_arr.size
+    return m - np.sum((1 - prob_arr)**n)
 
 
 
@@ -173,14 +174,11 @@ def generate_nonunif_estimator(prob_arr, k, Y_max, verbose=False):
     return estimator
 
 
-### Generating the umi_probs 
-def generate_umis_and_probs(max_len=12, outdir=""):
+### Generating the umi_probs for the constant pwm 
+def compute_cpwm_probs(max_len=12):
     # nucleotide probabilities (kept local to the function)
     nt_probs = {'A': 0.23, 'C': 0.24, 'G': 0.21, 'T': 0.32}
     nt_logs = {nt: np.log(p) for nt, p in nt_probs.items()}
-
-    outdir = Path(outdir)
-    outdir.mkdir(exist_ok=True)
 
     umi_dfs = {}
     for length in range(1, max_len + 1):
@@ -197,9 +195,175 @@ def generate_umis_and_probs(max_len=12, outdir=""):
         df = pd.DataFrame({'UMI': umis, 'prob': probs})
         umi_dfs[length] = df
 
-        # save CSV file
-        csv_path = outdir / f"umi_probs_{length}.csv"
-        df.to_csv(csv_path, index=False)
-
-        print(f"Saved: {csv_path}")
     return umi_dfs
+
+
+
+### Computing synthesis probabilities for each UMI in the DataFrame, given the s_pos array (truncation model)
+def compute_sf_cpwm_probs(s_pos, max_len=12):
+
+    umi_dfs = {}
+
+    pA, pC, pG, pT = 0.23, 0.24, 0.21, 0.32
+
+    for k in range(1, max_len + 1):
+
+        s_pos_k = np.array(s_pos[:k])
+
+        # generate UMIs
+        umis = [''.join(x) for x in itertools.product("ACGT", repeat=k)]
+        umi_arr = np.array([list(u) for u in umis])
+
+        # base counts
+        nA = (umi_arr == "A").sum(axis=1)
+        nC = (umi_arr == "C").sum(axis=1)
+        nG = (umi_arr == "G").sum(axis=1)
+        nT = (umi_arr == "T").sum(axis=1)
+
+        # trailing T calculation
+        trailing_ts = np.array([len(u) - len(u.rstrip("T")) for u in umis])
+        prefix_len = k - trailing_ts
+
+        probs = np.zeros(len(umis))
+
+        for i, umi in enumerate(umis):
+
+            pre = prefix_len[i]
+            trail = trailing_ts[i]
+
+            prefix_survival = np.prod(1 - s_pos_k[:pre])
+
+            prefix_base_prob = (
+                (pA ** nA[i]) *
+                (pC ** nC[i]) *
+                (pG ** nG[i]) *
+                (pT ** (nT[i] - trail))
+            )
+
+            qi = s_pos_k[pre:k] + (1 - s_pos_k[pre:k]) * pT
+            tail_prob = np.prod(qi)
+
+            probs[i] = prefix_survival * prefix_base_prob * tail_prob
+
+        probs = probs / probs.sum()
+
+        umi_dfs[k] = pd.DataFrame({
+            "UMI": umis,
+            "prob": probs
+        })
+
+    return umi_dfs
+
+### Probabilties for Nonconstant
+def compute_nonconstant_pwm_probs(pfm, max_len=12):
+
+    umi_prob_dict = {}
+
+    bases = ['A','C','G','T']
+    base_to_idx = {b:i for i,b in enumerate(bases)}
+
+    # convert pfm to numpy for fast indexing
+    pwm = pfm.loc[bases].values   # shape (4,12)
+
+    for k in range(1, max_len+1):
+
+        umis = []
+        probs = []
+
+        for umi_tuple in itertools.product(bases, repeat=k):
+
+            umi = ''.join(umi_tuple)
+
+            prob = 1.0
+            for pos, base in enumerate(umi):
+                prob *= pwm[base_to_idx[base], pos]
+
+            umis.append(umi)
+            probs.append(prob)
+
+        df = pd.DataFrame({
+            "umi": umis,
+            "prob": probs
+        })
+
+        umi_prob_dict[k] = df
+
+    return umi_prob_dict
+
+def compute_sf_ncpwm_probs(pfm, s_pos, max_len=12):
+
+    umi_prob_dict = {}
+
+    bases = ['A','C','G','T']
+    base_to_idx = {b:i for i,b in enumerate(bases)}
+
+    pwm = pfm.loc[bases].values
+
+    for k in range(1, max_len+1):
+
+        umis = []
+        probs = []
+
+        for umi_tuple in itertools.product(bases, repeat=k):
+
+            umi = ''.join(umi_tuple)
+
+            trailing_ts = len(umi) - len(umi.rstrip("T"))
+            prefix_len = k - trailing_ts
+
+            prob = 1.0
+
+            # prefix region
+            for pos in range(prefix_len):
+                base = umi[pos]
+                prob *= (1 - s_pos[pos]) * pwm[base_to_idx[base], pos]
+
+            # truncation tail
+            for pos in range(prefix_len, k):
+                pT = pwm[base_to_idx['T'], pos]
+                prob *= s_pos[pos] + (1 - s_pos[pos]) * pT
+
+            umis.append(umi)
+            probs.append(prob)
+
+        df = pd.DataFrame({
+            "umi": umis,
+            "prob": probs
+        })
+
+        umi_prob_dict[k] = df
+
+    return umi_prob_dict
+
+
+
+
+### Creating the empirical UMI distribution 
+def compute_emp_dist(dedup_df, max_len=12):
+    """
+    Takes as input a deduplicated dataframe and and computes empirical UMI distribution for 1 to 1
+    """
+    total = len(dedup_df)
+    
+    umi_df = {}
+    for k in range(1, 13):
+        prefixes = dedup_df['UB'].str[:k]
+        counts = prefixes.value_counts()
+        
+        probs = counts / total
+        
+        df_pk = (
+        probs
+        .rename('prob')
+        .reset_index()
+        .rename(columns={'index':'umi'})
+    )
+
+        umi_df[k] = df_pk
+        
+    return umi_df
+
+
+    
+    
+    
