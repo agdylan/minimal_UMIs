@@ -5,6 +5,7 @@ import itertools
 import pandas as pd
 import numpy as np
 from pathlib import Path
+from scipy.optimize import brentq
 
 
 
@@ -17,7 +18,7 @@ def f(n_vals, j):
 
 
 
-### Uniform Method of Moments Estimator: from umi_utils import mom_estimator_unif
+### Uniform Method of Moments Estimator
 @njit
 def _mom_estimator_unif_scalar(y, K):
     """
@@ -42,6 +43,7 @@ def _mom_estimator_unif_array(y, K):
         out[i] = _mom_estimator_unif_scalar(yr[i], K)
     return out.reshape(y.shape)
 
+### Method of Moments estimator wih uniform distribution
 def mom_estimator_unif(y, K):
     """
     Public API unchanged. Accepts scalar/array-like y.
@@ -56,7 +58,7 @@ def mom_estimator_unif(y, K):
 
 
 
-### Non-uniform forward model: from umi_utils import non_unif_forward_model 
+### Non-uniform forward model
 @njit
 def non_unif_forward_model(n, prob_arr, K):
     """
@@ -68,8 +70,7 @@ def non_unif_forward_model(n, prob_arr, K):
 
 
 
-
-### Non-uniform Method of Moments Estimator, from umi_utils import generate_nonunif_estimator
+### Lookup table construction for the non-uniform estimator
 @njit
 def nonunif_build_lookup_table(Y_max, K, f_hat_values, n_values):
     """
@@ -110,7 +111,9 @@ def nonunif_build_lookup_table(Y_max, K, f_hat_values, n_values):
         
     return n_lookup_table
 
-def generate_nonunif_estimator(prob_arr, k, Y_max, verbose=False):
+
+### Factory function to generate a fast Method of Moments estimator for the non-uniform case
+def generate_mom_estimator(prob_arr, k, Y_max, verbose=False):
     """
     Factory function to generate a fast Method of Moments estimator.
     Usage: estimator = generate_nonunif_estimator(prob_arr, k, Y_max)
@@ -197,65 +200,8 @@ def compute_cpwm_probs(max_len=12):
 
     return umi_dfs
 
-
-
-### Computing synthesis probabilities for each UMI in the DataFrame, given the s_pos array (truncation model)
-def compute_sf_cpwm_probs(s_pos, max_len=12):
-
-    umi_dfs = {}
-
-    pA, pC, pG, pT = 0.23, 0.24, 0.21, 0.32
-
-    for k in range(1, max_len + 1):
-
-        s_pos_k = np.array(s_pos[:k])
-
-        # generate UMIs
-        umis = [''.join(x) for x in itertools.product("ACGT", repeat=k)]
-        umi_arr = np.array([list(u) for u in umis])
-
-        # base counts
-        nA = (umi_arr == "A").sum(axis=1)
-        nC = (umi_arr == "C").sum(axis=1)
-        nG = (umi_arr == "G").sum(axis=1)
-        nT = (umi_arr == "T").sum(axis=1)
-
-        # trailing T calculation
-        trailing_ts = np.array([len(u) - len(u.rstrip("T")) for u in umis])
-        prefix_len = k - trailing_ts
-
-        probs = np.zeros(len(umis))
-
-        for i, umi in enumerate(umis):
-
-            pre = prefix_len[i]
-            trail = trailing_ts[i]
-
-            prefix_survival = np.prod(1 - s_pos_k[:pre])
-
-            prefix_base_prob = (
-                (pA ** nA[i]) *
-                (pC ** nC[i]) *
-                (pG ** nG[i]) *
-                (pT ** (nT[i] - trail))
-            )
-
-            qi = s_pos_k[pre:k] + (1 - s_pos_k[pre:k]) * pT
-            tail_prob = np.prod(qi)
-
-            probs[i] = prefix_survival * prefix_base_prob * tail_prob
-
-        probs = probs / probs.sum()
-
-        umi_dfs[k] = pd.DataFrame({
-            "UMI": umis,
-            "prob": probs
-        })
-
-    return umi_dfs
-
-### Probabilties for Nonconstant
-def compute_nonconstant_pwm_probs(pfm, max_len=12):
+### Generating the umi_probs for the non-constant pwm
+def compute_nonconstant_pwm_probs(pwm, max_len=12):
 
     umi_prob_dict = {}
 
@@ -263,7 +209,7 @@ def compute_nonconstant_pwm_probs(pfm, max_len=12):
     base_to_idx = {b:i for i,b in enumerate(bases)}
 
     # convert pfm to numpy for fast indexing
-    pwm = pfm.loc[bases].values   # shape (4,12)
+    pwm = pwm.loc[bases].values   # shape (4,12)
 
     for k in range(1, max_len+1):
 
@@ -282,7 +228,7 @@ def compute_nonconstant_pwm_probs(pfm, max_len=12):
             probs.append(prob)
 
         df = pd.DataFrame({
-            "umi": umis,
+            "UMI": umis,
             "prob": probs
         })
 
@@ -290,64 +236,223 @@ def compute_nonconstant_pwm_probs(pfm, max_len=12):
 
     return umi_prob_dict
 
-def compute_sf_ncpwm_probs(pfm, s_pos, max_len=12):
 
-    umi_prob_dict = {}
+### Generating the umi_probs for the synthesis failure model withc constant pwm
+def compute_sf_cpwm_probs(s_pos_load, max_k=12):
 
-    bases = ['A','C','G','T']
-    base_to_idx = {b:i for i,b in enumerate(bases)}
+    bp_probs = [0.23, 0.24, 0.21, 0.32]
+    pA, pC, pG, pT = bp_probs
 
-    pwm = pfm.loc[bases].values
+    s_pos_full = np.asarray(s_pos_load, dtype=float)
 
-    for k in range(1, max_len+1):
+    distributions = {}
+
+    for k in range(1, max_k + 1):
+
+        df = pd.DataFrame({
+            "UMI": ["".join(x) for x in itertools.product("ACGT", repeat=k)]
+        })
+
+
+        df["num_as"] = df["UMI"].str.count("A")
+        df["num_cs"] = df["UMI"].str.count("C")
+        df["num_gs"] = df["UMI"].str.count("G")
+        df["num_ts"] = df["UMI"].str.count("T")
+
+        df["num_trailing_ts"] = (
+            df["UMI"]
+            .str.extract(r"(T*)$")[0]
+            .str.len()
+            .astype(int)
+        )
+
+        s_pos = s_pos_full[:k]
+        L = k
+
+        t = df["num_trailing_ts"].to_numpy(dtype=int)
+
+        nA = df["num_as"].to_numpy()
+        nC = df["num_cs"].to_numpy()
+        nG = df["num_gs"].to_numpy()
+        nT = df["num_ts"].to_numpy()
+
+        nT_nontrail = nT - t
+
+        survival_prefix = np.cumprod(1.0 - s_pos)
+
+        P0_survival_lookup = np.zeros(L + 1)
+        P0_survival_lookup[:L] = survival_prefix[::-1]
+        P0_survival_lookup[L] = 1.0
+
+        P0_survival = P0_survival_lookup[t]
+
+        P_base = (
+            (pA ** nA)
+            * (pC ** nC)
+            * (pG ** nG)
+            * (pT ** nT_nontrail)
+        )
+
+        bracket_lookup = np.zeros(L + 1)
+
+        P_fail = s_pos
+        P_T = (1.0 - s_pos) * pT
+
+        bracket_lookup[0] = 1.0
+
+        for tt in range(1, L + 1):
+            j = L - tt
+            bracket_lookup[tt] = P_fail[j] + P_T[j] * bracket_lookup[tt - 1]
+
+        bracket = bracket_lookup[t]
+
+        prob_trunc = P_base * P0_survival * bracket
+
+        distributions[k] = df[["UMI"]].assign(prob=prob_trunc)
+
+    return distributions
+
+### Generating the umi_probs for the synthesis failure model with position-specific pwm
+def compute_sf_ncpwm_probs(pwm, s_pos_load, max_k=12):
+    """
+    Compute UMI probabilities under a synthesis-failure model with
+    position-specific base probabilities from a PWM.
+
+    Parameters
+    ----------
+    pwm : pd.DataFrame
+        Position weight matrix with rows A, C, G, T and columns corresponding
+        to UMI positions. Entry (base, pos) is the probability of synthesizing
+        that base at that position, conditional on synthesis not failing there.
+    s_pos_load : array-like
+        Position-specific synthesis failure probabilities.
+    max_k : int, default=12
+        Compute distributions for all UMI lengths k = 1, ..., max_k.
+
+    Returns
+    -------
+    distributions : dict
+        Dictionary where distributions[k] is a DataFrame with columns:
+            - UMI  : all possible UMI strings of length k
+            - prob : probability of observing that UMI under the model
+    """
+
+    # Fix the row order so indexing is consistent everywhere
+    bases = ['A', 'C', 'G', 'T']
+    base_to_idx = {b: i for i, b in enumerate(bases)}
+
+    # Reorder PWM rows to match bases = ['A', 'C', 'G', 'T']
+    pwm = pwm.loc[bases].values
+
+    # Convert synthesis-failure probabilities to a NumPy array
+    s_pos_full = np.asarray(s_pos_load, dtype=float)
+
+    # Basic sanity checks: we cannot ask for longer UMIs than the PWM
+    # or synthesis-failure vector can support
+    if max_k > pwm.shape[1]:
+        raise ValueError("max_k exceeds the number of PWM positions")
+
+    if max_k > len(s_pos_full):
+        raise ValueError("max_k exceeds the length of s_pos_load")
+
+    distributions = {}
+
+    # Build a separate distribution for each UMI length k
+    for k in range(1, max_k + 1):
 
         umis = []
         probs = []
 
-        for umi_tuple in itertools.product(bases, repeat=k):
+        # Restrict the synthesis-failure probabilities to the first k positions
+        s_pos = s_pos_full[:k]
+        L = k
 
+        # survival_prefix[i] = probability that synthesis survives through
+        # positions 0, 1, ..., i
+        survival_prefix = np.cumprod(1.0 - s_pos)
+
+        # Lookup table for the survival probability of the non-trailing prefix.
+        # For a UMI with t trailing T's, the non-trailing prefix has length L - t,
+        # so we need product_{i=0}^{L-t-1} (1 - s_i).
+        P0_survival_lookup = np.zeros(L + 1)
+        P0_survival_lookup[:L] = survival_prefix[::-1]
+        P0_survival_lookup[L] = 1.0   # when t = L, the prefix length is 0
+
+        # At position j:
+        #   P_fail[j] = probability synthesis fails at j
+        #   P_T[j]    = probability synthesis survives at j and emits T there
+        P_fail = s_pos
+        pT_pos = pwm[base_to_idx['T'], :L]
+        P_T = (1.0 - s_pos) * pT_pos
+
+        # bracket_lookup[t] stores the contribution from the trailing region
+        # for a tail of exactly t trailing T's
+        bracket_lookup = np.zeros(L + 1)
+        bracket_lookup[0] = 1.0
+
+        # Build the trailing-region recursion backward from the end
+        # of the UMI:
+        #
+        # bracket_lookup[t] =
+        #     P(fail at position j)
+        #   + P(survive at j and emit T) * bracket_lookup[t-1]
+        #
+        # where j = L - t
+        for tt in range(1, L + 1):
+            j = L - tt
+            bracket_lookup[tt] = P_fail[j] + P_T[j] * bracket_lookup[tt - 1]
+
+        # Enumerate every possible UMI of length k
+        for umi_tuple in itertools.product(bases, repeat=k):
             umi = ''.join(umi_tuple)
 
-            trailing_ts = len(umi) - len(umi.rstrip("T"))
-            prefix_len = k - trailing_ts
+            # Number of trailing T's at the end of the observed UMI
+            t = len(umi) - len(umi.rstrip('T'))
 
-            prob = 1.0
+            # The prefix before the trailing T run
+            prefix_len = L - t
 
-            # prefix region
+            # Probability of the non-trailing prefix under the PWM:
+            # multiply the probability of the observed base at each
+            # position in the prefix
+            base_prob = 1.0
             for pos in range(prefix_len):
                 base = umi[pos]
-                prob *= (1 - s_pos[pos]) * pwm[base_to_idx[base], pos]
+                base_prob *= pwm[base_to_idx[base], pos]
 
-            # truncation tail
-            for pos in range(prefix_len, k):
-                pT = pwm[base_to_idx['T'], pos]
-                prob *= s_pos[pos] + (1 - s_pos[pos]) * pT
+            # Probability synthesis survives through the non-trailing prefix
+            P0_survival = P0_survival_lookup[t]
+
+            # Contribution from the trailing region
+            bracket = bracket_lookup[t]
+
+            # Final probability for this observed UMI
+            prob = base_prob * P0_survival * bracket
 
             umis.append(umi)
             probs.append(prob)
 
+        # Store the distribution for this UMI length
         df = pd.DataFrame({
-            "umi": umis,
+            "UMI": umis,
             "prob": probs
         })
 
-        umi_prob_dict[k] = df
+        distributions[k] = df.reset_index(drop=True)
 
-    return umi_prob_dict
-
-
+    return distributions
 
 
-### Creating the empirical UMI distribution 
+### Generating the empirical umi distribution from the deduplicated data
 def compute_emp_dist(dedup_df, max_len=12):
     """
-    Takes as input a deduplicated dataframe and and computes empirical UMI distribution for 1 to 1
+    Takes as input a deduplicated dataframe and and computes empirical UMI distribution for 1 to 12
     """
     total = len(dedup_df)
     
     umi_df = {}
     for k in range(1, 13):
-        prefixes = dedup_df['UB'].str[:k]
+        prefixes = dedup_df['UMI'].str[:k]
         counts = prefixes.value_counts()
         
         probs = counts / total
@@ -363,7 +468,58 @@ def compute_emp_dist(dedup_df, max_len=12):
         
     return umi_df
 
+# NOTE: The following code is the function for the MLE Estimator
 
+### Converting the umi distribution dataframe into a dictionary for fast lookup
+def load_p_k(df):
+    """
+    Convert a dataframe with columns ['UMI','prob']
+    into a dictionary mapping umi -> probability.
+    """
+
+    p_dict = dict(zip(df['UMI'], df['prob']))
+
+    return p_dict
+
+
+### Generating the MLE for N using a robust Poissonized likelihood approach
+def mle_N_fast(observed_umis, p_dict):
+    """
+    Robust Poissonized MLE for N.
+    """
     
+    # Edge case: no UMIs observed
+    if len(observed_umis) == 0:
+        return 0.0
     
+    # Extract probabilities
+    p_obs = np.array([p_dict[u] for u in observed_umis])
+    sum_p_obs = p_obs.sum()
+    
+    # Stable score function
+    def score(N):
+        exp_term = np.exp(-p_obs * N)
+        denom = 1 - exp_term
+        denom = np.maximum(denom, 1e-15) ## Done to prevent division by zero according to floatin point arithmetic
+        
+        term1 = np.sum(p_obs * exp_term / denom)
+        term2 = 1 - sum_p_obs
+        
+        return term1 - term2
+    
+    # Lower bound
+    lower = 1e-12
+    
+    # Adaptive upper bound
+    upper = max(10 * len(observed_umis), 10.0)
+    
+    # Expand upper until sign change
+    while score(lower) * score(upper) > 0:
+        upper *= 2
+        if upper > 1e9:
+            raise RuntimeError("Failed to bracket root.")
+    
+    return brentq(score, lower, upper)
+
+
     
