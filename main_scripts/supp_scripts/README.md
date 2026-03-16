@@ -22,5 +22,5 @@ This README describes several scripts used in the generation of figures for the 
 - **MALAT1_anomaly_detection.ipynb**
     Detecting that MALAT1 is an outlier, and MA plot for observed minus expected counts.
 
-- **fig1_plots.ipynb**
+- **fig1_plots.py**
     Script for generating Figure 1 synthetic plots.
